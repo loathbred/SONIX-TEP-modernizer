@@ -115,10 +115,11 @@ def extra_data(string_data):
     vpp_string = string_data[0x85E:0x867].tobytes().decode('utf-8',errors = 'replace')
     pack = string_data[0xE08:0xE1F]
 
-    print("signal location string",position_string)
-    match = re.search(r',([^I]*?)In', position_string)
+    match = re.search(r'WP:([\d.]+)', position_string)
     if match:
-        signal_location = int(float(match.group(1).strip()) * 1000) + 0
+        signal_location = (float(match.group(1).strip()))
+    print("signal location string",signal_location)
+
 
     vpp = float(vpp_string.strip().rstrip('\x00'))
 
@@ -126,8 +127,8 @@ def extra_data(string_data):
         start = STRINGSTARTADDRESS + (i * 20)
         string_list[i] = string_data[start:start+20].tobytes().decode('utf-8',errors = 'replace').strip()
 
-    for(i) in range(22):
-        print(labels[i] + ": " + string_list[i])
+    #for(i) in range(22): ##
+    #    print(labels[i] + ": " + string_list[i])
 
     misc_strings[0] = string_data[0x3E00:0x3E00 + 20].tobytes().decode('utf-8',errors = 'replace').strip() #Title
     misc_strings[1] = string_data[0x3EE0:0x3EE0 + 20].tobytes().decode('utf-8',errors = 'replace').strip() #Equipment
@@ -142,32 +143,49 @@ def pack_decode(pack):
     return  [start_pos, gate_length, gate_high, gate_low]
 
 #find the first signal
-def find_signal(FullYcords, pack):
+def find_signal(FullYcords, pack, max, m):
     gate_length_us = pack[22] / 10.0                            # 1.5 µs
     start_samples = (pack[3] << 8) | (pack[13] & 0xFF)          # 929 samples
-    high_threshold = pack[5] / 255.0 * 100                      # ~85% 
-    low_threshold = pack[4] / 255.0 * 100   
+    high_threshold = pack[5] / 255.0                       # ~85% 
+    low_threshold = pack[4] / 255.0 
+    min = abs(m)
+    total = max + min
+    hgate = (total * high_threshold) - min
+    lgate = (total * low_threshold) - min
+    print("total", total)
+    print("hgate",hgate * 0.001960784688995215 )
+    print("lgate",lgate * 0.001960784688995215)
+    i = 0 
+    for e in FullYcords:
+        if (e > hgate) or (e < lgate):
+            return i
+        i+= 1
+
     
 
 
 
+    
+def find_DeltaY (FullYcords, vpp):
+    max = float(np.max(FullYcords))
+    min = float (np.min(FullYcords))
+    temp =(max + abs(min))
+    return (vpp/temp, max, min)
+
+
 #oscilloscope graph
-def digital_oscilloscope(FullYcords, vpp):
+def digital_oscilloscope(FullYcords, deltaY, start_idx, max, min, signal_location):
     #interactive graphs
-    X0 = 0
-    sampling_rate = 1
-    Xcoords = np.arange(X0, X0 + 512) * sampling_rate
+    t0 = signal_location 
+    sampling_rate = .005
+    Xcoords = np.arange(t0, t0 + (511 * sampling_rate), sampling_rate)
     Ycords = FullYcords[start_idx:start_idx + 512]
-    max = float(np.max(Ycords))
-    min = float(np.min(Ycords))
-    temp =(abs(max) + abs(min))
-    deltaY = vpp/temp
     Ycords = Ycords * deltaY
-    print("DeltaY",deltaY)
-    print("GraphStart",start_idx)
+    print("DeltaY",deltaY) ##
+    print("GraphStart",start_idx) ##
+    
     # Oscilloscope Graph
     plt.ion() #iniatalize interactive graph
-
     fig, ax1 = plt.subplots(num = 1)
     line, = ax1.plot(Xcoords, Ycords)
     ax1.set_ylim(max * deltaY * 1.2, min * deltaY *1.2)  # Fixed y-axis
@@ -200,33 +218,12 @@ def fft_graph(FullYcords, fft_start):
 
 #GRaph UI
 def on_key(event):
-    global start_idx, line    
-    if event.key == 'a':
-        start_idx -= 20
-        if start_idx < 0:
-            start_idx = 0
-    
-    elif event.key == 'd':
-        start_idx += 20
-        if start_idx + 512 > len(FullYcords):
-            start_idx = len(FullYcords) - 512
-            if start_idx < 0:
-                start_idx = 0
-    elif event.key == 's':
+    if event.key == 's':
         result = messagebox.askyesno("FFT", "transform")
         if result:
             fft_graph(FullYcords, start_idx)
         else:
             print("User clicked No")
-
-    else:
-        return  # Ignore other keys
-    
-    # Update the view (O(1) slicing!)
-    Ycords = FullYcords[start_idx:start_idx + 512]
-    line.set_ydata(Ycords)
-    ax1.set_title(f'View starting at index: {start_idx}')
-    fig.canvas.draw_idle()
 
 
 
@@ -237,9 +234,10 @@ file_path =  input("paste filepath: ").strip('"')
 string_data, FullYcords, file_type = file_pull(graph_start, file_path)
 if(file_type == "BP1"):
     string_list, signal_location, vpp, pack, misc_strings = extra_data(string_data)
+    deltaY, max, min = find_DeltaY(FullYcords, vpp)
     #start_idx = signal_location 
-    start_idx = find_signal(FullYcords, pack)
-    fig, ax1, line = digital_oscilloscope(FullYcords, vpp)
+    start_idx = find_signal(FullYcords, pack, max, min)
+    fig, ax1, line = digital_oscilloscope(FullYcords, deltaY, start_idx, max, min, signal_location)
     fig.canvas.mpl_connect('key_press_event', on_key)
     plt.show(block=True)  # Keep window open
 elif(file_type == "BP2"):
