@@ -107,13 +107,14 @@ def file_pull(graphstart, file_path):
     f.close()
 
 
-#dig around in string_data to pull info from addresses
+#dig around in string_data to pull usable variables from addresses
 def extra_data(string_data):
     string_list = np.empty(22, dtype=object)
     misc_strings = np.empty(10, dtype = object)
     position_string = string_data[0x82A:0x84c].tobytes().decode('utf-8',errors = 'replace')
     vpp_string = string_data[0x85E:0x867].tobytes().decode('utf-8',errors = 'replace')
     pack = string_data[0xE08:0xE1F]
+    gate_data = string_data[0x900:0x96f]
 
     match = re.search(r'WP:([\d.]+)', position_string)
     if match:
@@ -132,46 +133,33 @@ def extra_data(string_data):
 
     misc_strings[0] = string_data[0x3E00:0x3E00 + 20].tobytes().decode('utf-8',errors = 'replace').strip() #Title
     misc_strings[1] = string_data[0x3EE0:0x3EE0 + 20].tobytes().decode('utf-8',errors = 'replace').strip() #Equipment
-    return(string_list, signal_location, vpp, pack,  misc_strings)
+    return(string_list, signal_location, vpp, pack, misc_strings, gate_data)
 
-
-def pack_decode(pack):
-    start_pos = pack[2:4].view(np.uint16)[0] * .01
-    gate_length = pack[22].view(np.uint8)
-    gate_high = float(pack[4].view(np.uint8)) / 256.0
-    gate_low = float(pack[5].view(np.uint8)) / 256.0
-    return  [start_pos, gate_length, gate_high, gate_low]
 
 #find the first signal
-def find_signal(FullYcords, pack, max, m):
-    gate_length_us = pack[22] / 10.0                            # 1.5 µs
-    start_samples = (pack[3] << 8) | (pack[13] & 0xFF)          # 929 samples
-    high_threshold = pack[5] / 255.0                       # ~85% 
-    low_threshold = pack[4] / 255.0 
-    min = abs(m)
-    total = max + min
-    hgate = (total * high_threshold) - min
-    lgate = (total * low_threshold) - min
-    print("total", total)
-    print("hgate",hgate * 0.001960784688995215 )
-    print("lgate",lgate * 0.001960784688995215)
+def find_signal(FullYcords, low_threshold):
+    print("lgate",low_threshold * 0.001960784688995215) ##
     i = 0 
     for e in FullYcords:
-        if (e > hgate) or (e < lgate):
+        if (e < low_threshold):
+            print (i)
             return i
         i+= 1
 
-    
-
-
-
-    
+#calculate DeltaY based on the Vpp and the max and min of the signal graph
 def find_DeltaY (FullYcords, vpp):
     max = float(np.max(FullYcords))
     min = float (np.min(FullYcords))
     temp =(max + abs(min))
     return (vpp/temp, max, min)
 
+#decode gate data
+def gate_decode (gate_data):
+    gate_length = gate_data[32:36].view('<u4')[0]
+    low_gate = gate_data[36:40].view('<i4')[0]
+    gate_start = gate_data[68:72].view('<u4')[0]
+    gate_end = gate_start + gate_length
+    return (gate_start, gate_end, low_gate, gate_length)
 
 #oscilloscope graph
 def digital_oscilloscope(FullYcords, deltaY, start_idx, max, min, signal_location):
@@ -184,8 +172,9 @@ def digital_oscilloscope(FullYcords, deltaY, start_idx, max, min, signal_locatio
     print("DeltaY",deltaY) ##
     print("GraphStart",start_idx) ##
     
-    # Oscilloscope Graph
-    plt.ion() #iniatalize interactive graph
+
+    #iniatalize interactive graph
+    plt.ion() 
     fig, ax1 = plt.subplots(num = 1)
     line, = ax1.plot(Xcoords, Ycords)
     ax1.set_ylim(max * deltaY * 1.2, min * deltaY *1.2)  # Fixed y-axis
@@ -196,8 +185,10 @@ def digital_oscilloscope(FullYcords, deltaY, start_idx, max, min, signal_locatio
 
 
 #fast fourier transformation graph
-def fft_graph(FullYcords, fft_start):
-    sample_size = 512
+def fft_graph(FullYcords, fft_start, gate_length):
+    print("fft start: ",fft_start)
+    print("gate length: ",gate_length)
+    sample_size = gate_length
     sampling_rate = 100 #MHz
     fft_end = fft_start + sample_size
     fft = np.fft.fft(FullYcords[(fft_start):(fft_end)])
@@ -205,7 +196,7 @@ def fft_graph(FullYcords, fft_start):
     fft_half = fft[:(n//2)]
     magnitude = np.abs(fft_half) 
     deltaX = sampling_rate / sample_size
-    MHz = np.arange(256) * deltaX
+    MHz = np.arange(int(sample_size/2)) * deltaX
 
     fig2 = plt.figure()
     plt.plot(MHz, magnitude)
@@ -216,16 +207,6 @@ def fft_graph(FullYcords, fft_start):
     plt.show(block=True)
 
 
-#GRaph UI
-def on_key(event):
-    if event.key == 's':
-        result = messagebox.askyesno("FFT", "transform")
-        if result:
-            fft_graph(FullYcords, start_idx)
-        else:
-            print("User clicked No")
-
-
 
 #MAIN METHOD
 
@@ -233,28 +214,32 @@ graph_start = 0x4174
 file_path =  input("paste filepath: ").strip('"')
 string_data, FullYcords, file_type = file_pull(graph_start, file_path)
 if(file_type == "BP1"):
-    string_list, signal_location, vpp, pack, misc_strings = extra_data(string_data)
+    string_list, signal_location, vpp, pack, misc_strings, gate_data = extra_data(string_data)
     deltaY, max, min = find_DeltaY(FullYcords, vpp)
-    #start_idx = signal_location 
-    start_idx = find_signal(FullYcords, pack, max, min)
+    gate_start, gate_end, low_gate, gate_length =gate_decode(gate_data)
+    start_idx = find_signal(FullYcords, low_gate)
     fig, ax1, line = digital_oscilloscope(FullYcords, deltaY, start_idx, max, min, signal_location)
-    fig.canvas.mpl_connect('key_press_event', on_key)
+    
     plt.show(block=True)  # Keep window open
 elif(file_type == "BP2"):
     print("unimplemented")
+
+
+
 
 
 #"C:\Users\alice\Documents\Mover\DAC\D0616.BP1"
 
 """#directory = Path("C:\\Users\\alice\\Documents\\Mover\\DAC")
 directory = Path("C:\\Users\\alice\\Documents\\tep files")
-
-#PACKED GATE DATA
-location = 0xE08
-size = 24
-numbers = True
-
-
 mass_text(directory, location, size, numbers)"""
 
 
+"""#GRaph UI
+def on_key(event):
+    if event.key == 's':
+        result = messagebox.askyesno("FFT", "transform")
+        if result:
+            fft_graph(FullYcords, gate_start, gate_length)
+        else:
+            print("User clicked No")"""
