@@ -1,2 +1,1 @@
-
-    lgate = (total * low_threshold) - min
+"C:\Users\alice\Documents\Mover\DAC\D0616.BP1"

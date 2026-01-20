@@ -118,8 +118,8 @@ def extra_data(string_data):
 
     match = re.search(r'WP:([\d.]+)', position_string)
     if match:
-        signal_location = (float(match.group(1).strip()))
-    print("signal location string",signal_location)
+        signal_gate_time = (float(match.group(1).strip()))
+    print("signal location string",signal_gate_time)
 
 
     vpp = float(vpp_string.strip().rstrip('\x00'))
@@ -128,20 +128,16 @@ def extra_data(string_data):
         start = STRINGSTARTADDRESS + (i * 20)
         string_list[i] = string_data[start:start+20].tobytes().decode('utf-8',errors = 'replace').strip()
 
-    #for(i) in range(22): ##
-    #    print(labels[i] + ": " + string_list[i])
-
     misc_strings[0] = string_data[0x3E00:0x3E00 + 20].tobytes().decode('utf-8',errors = 'replace').strip() #Title
     misc_strings[1] = string_data[0x3EE0:0x3EE0 + 20].tobytes().decode('utf-8',errors = 'replace').strip() #Equipment
-    return(string_list, signal_location, vpp, pack, misc_strings, gate_data)
+    return(string_list, signal_gate_time, vpp, pack, misc_strings, gate_data)
 
 
 #find the first signal
-def find_signal(FullYcords, low_threshold):
-    print("lgate",low_threshold * 0.001960784688995215) ##
+def find_signal(FullYcords, low_gate):
     i = 0 
     for e in FullYcords:
-        if (e < low_threshold):
+        if (e < low_gate):
             print (i)
             return i
         i+= 1
@@ -154,24 +150,34 @@ def find_DeltaY (FullYcords, vpp):
     return (vpp/temp, max, min)
 
 #decode gate data
-def gate_decode (gate_data):
+def gate_decode (gate_data, FullYcords, signal_gate_time):
     gate_length = gate_data[32:36].view('<u4')[0]
     low_gate = gate_data[36:40].view('<i4')[0]
     gate_start = gate_data[68:72].view('<u4')[0]
     gate_end = gate_start + gate_length
-    return (gate_start, gate_end, low_gate, gate_length)
+    signal_gate_intersect = find_signal(FullYcords, low_gate)
+    actual_graph_start = signal_gate_intersect - gate_length 
+    print("gate length: ", gate_length)
+    print("low gate: ", low_gate)
+    print("gate start: ", gate_start)
+    print("gate end: ", gate_end)
+    print("signal gate intersect", signal_gate_intersect)
+    print("signal gate time: ",signal_gate_time)
+    
+    return (gate_start, gate_end, low_gate, gate_length, actual_graph_start)
+
 
 #oscilloscope graph
-def digital_oscilloscope(FullYcords, deltaY, start_idx, max, min, signal_location):
+def digital_oscilloscope(FullYcords, deltaY, start_idx, max, min, signal_gate_time, deltaX):
     #interactive graphs
-    t0 = signal_location 
-    sampling_rate = .005
-    Xcoords = np.arange(t0, t0 + (511 * sampling_rate), sampling_rate)
-    Ycords = FullYcords[start_idx:start_idx + 512]
+    print(start_idx)
+    t0 = signal_gate_time - gate_length* deltaX
+    sampling_rate = .01
+    Xcoords = np.arange(t0, t0 + (511 * sampling_rate), deltaX)
+    Ycords = FullYcords[start_idx:start_idx + 512] #I need to turn start index from the time in seconds into the location in the file
     Ycords = Ycords * deltaY
     print("DeltaY",deltaY) ##
     print("GraphStart",start_idx) ##
-    
 
     #iniatalize interactive graph
     plt.ion() 
@@ -185,13 +191,9 @@ def digital_oscilloscope(FullYcords, deltaY, start_idx, max, min, signal_locatio
 
 
 #fast fourier transformation graph
-def fft_graph(FullYcords, fft_start, gate_length):
-    print("fft start: ",fft_start)
-    print("gate length: ",gate_length)
-    sample_size = gate_length
+def fft_graph(cord_list, gate_length):
     sampling_rate = 100 #MHz
-    fft_end = fft_start + sample_size
-    fft = np.fft.fft(FullYcords[(fft_start):(fft_end)])
+    fft = np.fft.fft(cord_list)
     n = len(fft)
     fft_half = fft[:(n//2)]
     magnitude = np.abs(fft_half) 
@@ -214,17 +216,17 @@ graph_start = 0x4174
 file_path =  input("paste filepath: ").strip('"')
 string_data, FullYcords, file_type = file_pull(graph_start, file_path)
 if(file_type == "BP1"):
-    string_list, signal_location, vpp, pack, misc_strings, gate_data = extra_data(string_data)
+    string_list, signal_gate_time, vpp, pack, misc_strings, gate_data, = extra_data(string_data)
     deltaY, max, min = find_DeltaY(FullYcords, vpp)
-    gate_start, gate_end, low_gate, gate_length =gate_decode(gate_data)
-    start_idx = find_signal(FullYcords, low_gate)
-    fig, ax1, line = digital_oscilloscope(FullYcords, deltaY, start_idx, max, min, signal_location)
+    deltaX = 0.01
+    gate_start, gate_end, low_gate, gate_length, signal_location =gate_decode(gate_data, FullYcords, signal_gate_time)
+    fig, ax1, line = digital_oscilloscope(FullYcords, deltaY, signal_location, max, min, signal_gate_time, deltaX)
     
     plt.show(block=True)  # Keep window open
 elif(file_type == "BP2"):
     print("unimplemented")
 
-
+#"C:\Users\alice\Documents\tep files\L0659.BP1"
 
 
 
