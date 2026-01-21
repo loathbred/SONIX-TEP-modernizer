@@ -6,8 +6,7 @@ from tkinter import messagebox
 from matplotlib.backends.backend_pdf import PdfPages
 from pathlib import Path
 
-#Disable default keymaps
-plt.rcParams['keymap.save'] = []
+
 
 #easy access
 STRINGSTARTADDRESS = 0x3C48  
@@ -35,7 +34,6 @@ labels = {
     20: "",
     21: "",
 }
-
 
 #Function for iterating through all files and seeing data at a certain location
 def file_TEST(file_path, target_location, target_size):
@@ -111,16 +109,11 @@ def file_pull(graphstart, file_path):
 def extra_data(string_data):
     string_list = np.empty(22, dtype=object)
     misc_strings = np.empty(10, dtype = object)
-    position_string = string_data[0x82A:0x84c].tobytes().decode('utf-8',errors = 'replace')
     vpp_string = string_data[0x85E:0x867].tobytes().decode('utf-8',errors = 'replace')
     pack = string_data[0xE08:0xE1F]
-    gate_data = string_data[0x900:0x96f]
 
-    match = re.search(r'WP:([\d.]+)', position_string)
-    if match:
-        signal_gate_time = (float(match.group(1).strip()))
-    print("signal location string",signal_gate_time)
-
+    gate_data = string_data[0x8FC:0xDF7]
+    gate_array = np.frombuffer(gate_data, dtype=np.uint8).reshape(7, 164)
 
     vpp = float(vpp_string.strip().rstrip('\x00'))
 
@@ -130,7 +123,7 @@ def extra_data(string_data):
 
     misc_strings[0] = string_data[0x3E00:0x3E00 + 20].tobytes().decode('utf-8',errors = 'replace').strip() #Title
     misc_strings[1] = string_data[0x3EE0:0x3EE0 + 20].tobytes().decode('utf-8',errors = 'replace').strip() #Equipment
-    return(string_list, signal_gate_time, vpp, pack, misc_strings, gate_data)
+    return(string_list, vpp, pack, misc_strings, gate_array)
 
 
 #find the first signal
@@ -138,9 +131,11 @@ def find_signal(FullYcords, low_gate):
     i = 0 
     for e in FullYcords:
         if (e < low_gate):
-            print (i)
+            print ("first singal location: ", i)
             return i
         i+= 1
+    print("no low gate")
+    return -1
 
 #calculate DeltaY based on the Vpp and the max and min of the signal graph
 def find_DeltaY (FullYcords, vpp):
@@ -150,10 +145,11 @@ def find_DeltaY (FullYcords, vpp):
     return (vpp/temp, max, min)
 
 #decode gate data
-def gate_decode (gate_data, FullYcords, signal_gate_time):
+def gate_decode (gate_array, FullYcords):
     gate_length = gate_data[32:36].view('<u4')[0]
     low_gate = gate_data[36:40].view('<i4')[0]
-    gate_start = gate_data[68:72].view('<u4')[0]
+    gate_start = gate_data[48:52].view('<u4')[0]
+    signal_gate_time = gate_data[68:72].view('<u4')[0]
     gate_end = gate_start + gate_length
     signal_gate_intersect = find_signal(FullYcords, low_gate)
     actual_graph_start = signal_gate_intersect - gate_length 
@@ -163,15 +159,21 @@ def gate_decode (gate_data, FullYcords, signal_gate_time):
     print("gate end: ", gate_end)
     print("signal gate intersect", signal_gate_intersect)
     print("signal gate time: ",signal_gate_time)
+    print("actual graph start: ", actual_graph_start)
     
-    return (gate_start, gate_end, low_gate, gate_length, actual_graph_start)
+    return (gate_start, gate_end, low_gate, gate_length, actual_graph_start, signal_gate_time)
 
+def active_gate_parse (gate_array):
 
+    for e in gate_array:
+        if e[]
+    
+    return (high_gate_data,low_gate_data)
 #oscilloscope graph
 def digital_oscilloscope(FullYcords, deltaY, start_idx, max, min, signal_gate_time, deltaX):
     #interactive graphs
-    print(start_idx)
-    t0 = signal_gate_time - gate_length* deltaX
+    print("graph start index: ",start_idx)
+    t0 = signal_gate_time * deltaX - gate_length* deltaX
     sampling_rate = .01
     Xcoords = np.arange(t0, t0 + (511 * sampling_rate), deltaX)
     Ycords = FullYcords[start_idx:start_idx + 512] #I need to turn start index from the time in seconds into the location in the file
@@ -216,10 +218,11 @@ graph_start = 0x4174
 file_path =  input("paste filepath: ").strip('"')
 string_data, FullYcords, file_type = file_pull(graph_start, file_path)
 if(file_type == "BP1"):
-    string_list, signal_gate_time, vpp, pack, misc_strings, gate_data, = extra_data(string_data)
+    string_list, vpp, pack, misc_strings, gate_array, = extra_data(string_data)
     deltaY, max, min = find_DeltaY(FullYcords, vpp)
     deltaX = 0.01
-    gate_start, gate_end, low_gate, gate_length, signal_location =gate_decode(gate_data, FullYcords, signal_gate_time)
+
+    gate_start, gate_end, low_gate, gate_length, signal_location, signal_gate_time =gate_decode(gate_array, FullYcords)
     fig, ax1, line = digital_oscilloscope(FullYcords, deltaY, signal_location, max, min, signal_gate_time, deltaX)
     
     plt.show(block=True)  # Keep window open
